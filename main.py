@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 import yt_dlp
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     StreamingResponse, 
@@ -480,13 +480,19 @@ async def search_videos(
 ):
     """Search YouTube videos"""
     if not q or len(q.strip()) < 2:
-        raise HTTPException(status_code=400, detail="Search query too short")
+        return {
+            "success": False,
+            "query": q,
+            "results": [],
+            "error": "Search query too short"
+        }
     
     try:
         # Check cache
         cache_key = f"search:{q}:{limit}"
         cached_results = await cache.get(cache_key)
         if cached_results:
+            cached_results["success"] = True
             return cached_results
         
         ydl_opts = {
@@ -519,6 +525,7 @@ async def search_videos(
                     })
             
             response = {
+                'success': True,
                 'query': q,
                 'count': len(results),
                 'results': results[:limit]
@@ -531,7 +538,12 @@ async def search_videos(
             
     except Exception as e:
         logger.error(f"Search error: {e}")
-        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+        return {
+            "success": False,
+            "query": q,
+            "results": [],
+            "error": str(e)
+        }
 
 @app.get("/formats")
 async def get_available_formats(
@@ -720,8 +732,6 @@ async def clear_cache():
     return {"status": "success", "message": "Cache cleared"}
 
 # WebSocket endpoint for real-time updates
-from fastapi import WebSocket, WebSocketDisconnect
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for real-time updates"""

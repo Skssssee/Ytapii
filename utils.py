@@ -79,6 +79,87 @@ class YouTubeUtils:
             return f"{hours}:{minutes:02d}:{secs:02d}"
         else:
             return f"{minutes}:{secs:02d}"
+    
+    @staticmethod
+    def search_youtube_sync(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Synchronous YouTube search using youtubesearchpython
+        Returns list of video dictionaries
+        """
+        try:
+            from youtubesearchpython import VideosSearch
+            
+            search = VideosSearch(query, limit=limit)
+            data = search.result()
+
+            if not data or "result" not in data:
+                return []
+
+            videos = []
+            for v in data["result"]:
+                # Extract video ID from link
+                video_id = None
+                if v.get("link"):
+                    video_id = YouTubeUtils.extract_video_id(v["link"])
+                
+                videos.append({
+                    "video_id": video_id,
+                    "title": v.get("title", "No Title"),
+                    "url": v.get("link", ""),
+                    "duration": v.get("duration"),
+                    "duration_formatted": YouTubeUtils.format_duration(
+                        YouTubeUtils.parse_duration_string(v.get("duration", "0:00"))
+                    ),
+                    "thumbnail": v.get("thumbnails", [{}])[0].get("url") if v.get("thumbnails") else "",
+                    "channel": v.get("channel", {}).get("name", "Unknown Channel"),
+                    "view_count": v.get("viewCount", {}).get("short", "0 views") if isinstance(v.get("viewCount"), dict) else "0 views",
+                    "upload_date": v.get("publishedTime", "Unknown"),
+                })
+
+            return videos
+
+        except ImportError:
+            print("Error: youtubesearchpython not installed. Install with: pip install youtubesearchpython")
+            return []
+        except Exception as e:
+            print(f"YouTube search error: {e}")
+            return []
+    
+    @staticmethod
+    async def search_youtube_async(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Asynchronous wrapper for YouTube search
+        """
+        # Run synchronous search in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            YouTubeUtils.search_youtube_sync, 
+            query, limit
+        )
+    
+    @staticmethod
+    def parse_duration_string(duration_str: str) -> int:
+        """
+        Parse duration string (e.g., "1:23:45" or "5:30") to seconds
+        """
+        if not duration_str:
+            return 0
+        
+        try:
+            parts = duration_str.split(':')
+            if len(parts) == 3:  # HH:MM:SS
+                hours, minutes, seconds = map(int, parts)
+                return hours * 3600 + minutes * 60 + seconds
+            elif len(parts) == 2:  # MM:SS
+                minutes, seconds = map(int, parts)
+                return minutes * 60 + seconds
+            elif len(parts) == 1:  # SS
+                return int(parts[0])
+            else:
+                return 0
+        except:
+            return 0
 
 class RateLimiter:
     """Simple rate limiter"""
@@ -112,6 +193,8 @@ class Cache:
     def __init__(self):
         self.cache = {}
         self.lock = asyncio.Lock()
+        self.hits = 0
+        self.misses = 0
     
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache"""
@@ -119,9 +202,13 @@ class Cache:
             if key in self.cache:
                 timestamp, value = self.cache[key]
                 if time.time() - timestamp < config.CACHE_TTL:
+                    self.hits += 1
                     return value
                 else:
                     del self.cache[key]
+                    self.misses += 1
+            else:
+                self.misses += 1
             return None
     
     async def set(self, key: str, value: Any):
@@ -144,3 +231,10 @@ class Cache:
 rate_limiter = RateLimiter()
 cache = Cache()
 youtube_utils = YouTubeUtils()
+
+# Convenience function for backward compatibility
+def youtube_search(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Convenience function for synchronous YouTube search
+    """
+    return youtube_utils.search_youtube_sync(query, limit)
